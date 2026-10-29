@@ -905,6 +905,37 @@ fn initial_view_is_edited_and_honoured_on_open() {
     assert_eq!((view.current, view.cover, app.right), (1, true, Some(pdfcraft_ui_egui::RightPanel::Bookmarks)));
 }
 
+#[test]
+fn initial_view_magnification_offers_25_and_100_percent() {
+    use egui::accesskit::Role;
+    use pdfcraft_engine::Magnification;
+    let mut h = harness();
+    h.state_mut().dialog = Some(Dialog::Properties(pdfcraft_ui_egui::PropsTab::InitialView));
+    // The dialog's height settles a frame after it opens; egui centers from the previous size.
+    h.run_steps(6);
+    for (label, percent) in [("100%", 100.0), ("25%", 25.0)] {
+        h.get_by_role_and_label(Role::ComboBox, "Magnification").click();
+        h.run_steps(3);
+        // The list is taller than the popup, so the item may need scrolling into view.
+        h.get_by_role_and_label(Role::Button, label).scroll_to_me();
+        h.run_steps(3);
+        h.get_by_role_and_label(Role::Button, label).click();
+        h.run_steps(2);
+        let (_, v) = h.state().view_draft.as_ref().expect("seeded");
+        assert_eq!(v.magnification, Magnification::Percent(percent), "{label}");
+    }
+    h.get_by_label("OK").click();
+    h.run_steps(3);
+    let s = h.state();
+    let id = s.views[s.active.unwrap()].id;
+    assert_eq!(s.session.get(id).unwrap().initial_view().magnification, Magnification::Percent(25.0));
+    // Opening the saved file follows it.
+    let bytes = s.session.save_bytes(id).unwrap();
+    let mut app = PdfCraftApp::new();
+    app.open_bytes("again.pdf", None, bytes.to_vec()).unwrap();
+    assert_eq!(app.views[0].zoom, 0.25);
+}
+
 fn drag(h: &mut Harness<'static, PdfCraftApp>, a: egui::Pos2, b: egui::Pos2) {
     h.hover_at(a);
     h.run_steps(1);
