@@ -2302,9 +2302,9 @@ tier = "P1"
 milestone = "M7"
 status = "partial"
 commands = ["edit.link"]
-tools = ["link_add"]
-evidence = ["crates/annot/src/tests.rs::links_are_added_edited_listed_and_removed", "crates/ui-egui/tests/it/pdf_links.rs::drawing_editing_and_deleting_links"]
-notes = "go to a page (Fit view); named destinations and zoom pending"
+tools = ["link_add", "link_edit", "link_list"]
+evidence = ["crates/annot/src/tests.rs::links_are_added_edited_listed_and_removed", "crates/ui-egui/tests/it/pdf_links.rs::drawing_editing_and_deleting_links", "crates/annot/src/tests.rs::page_links_keep_their_zoom", "crates/automation/tests/it/automation.rs::link_zoom_through_tools", "crates/ui-egui/tests/it/pdf_links.rs::link_properties_sets_the_page_view_zoom", "crates/ui-egui/tests/it/pdf_links.rs::an_appearance_edit_keeps_the_destination_as_written"]
+notes = "go to a page at a zoom: Fit Page, Fit Width, Fit Height, Fit Visible, Actual Size, Inherit Zoom or a percentage (Link Properties ▸ Zoom; link_add and link_edit zoom), written as /Fit, /FitH, /FitV, /FitB or /XYZ with the position null (ISO 32000-2 Table 149). Links other tools wrote read as the nearest zoom, and Link Properties rewrites an action only when it is changed, so a position it doesn't show is kept. Missing: named destinations as targets, and a position on the page (Acrobat's Set Link takes the current view)"
 
 [[feature]]
 id = "edit.action-uri"

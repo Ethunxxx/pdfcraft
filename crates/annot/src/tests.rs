@@ -605,12 +605,12 @@ fn stamps_draw_their_label_and_by_line() {
 
 #[test]
 fn links_are_added_edited_listed_and_removed() {
-    use crate::links::{self, Highlight, LinkAction, LinkStyle};
+    use crate::links::{self, Highlight, LinkAction, LinkStyle, LinkZoom};
     let mut doc = fixture();
     let before = links::list(&doc).len();
     let i = links::add(&mut doc, 0, [10.0, 10.0, 110.0, 30.0], &LinkAction::Uri("https://example.org".into()), &LinkStyle::default()).unwrap();
     let style = LinkStyle { visible: true, color: [1.0, 0.0, 0.0], width: 2.0, dashed: true, underline: false, highlight: Highlight::Outline };
-    links::add(&mut doc, 1, [10.0, 10.0, 60.0, 30.0], &LinkAction::Page(0), &style).unwrap();
+    links::add(&mut doc, 1, [10.0, 10.0, 60.0, 30.0], &LinkAction::Page { page: 0, zoom: LinkZoom::FitPage }, &style).unwrap();
     let doc = reopen(&doc);
     let all = links::list(&doc);
     assert_eq!(all.len(), before + 2);
@@ -619,7 +619,7 @@ fn links_are_added_edited_listed_and_removed() {
         (web.action.clone(), web.style.visible, web.style.highlight),
         (LinkAction::Uri("https://example.org".into()), false, Highlight::Invert)
     );
-    let page = all.iter().find(|l| l.page == 1 && l.action == LinkAction::Page(0)).unwrap().clone();
+    let page = all.iter().find(|l| l.page == 1 && l.action == LinkAction::Page { page: 0, zoom: LinkZoom::FitPage }).unwrap().clone();
     assert_eq!(page.style, style);
     let mut doc = doc;
     links::set(&mut doc, 1, page.index, Some([0.0, 0.0, 50.0, 20.0]), Some(&LinkAction::Uri("mailto:ada@example.org".into())), None).unwrap();
@@ -629,7 +629,80 @@ fn links_are_added_edited_listed_and_removed() {
     assert!(links::delete(&mut doc, 0, 999).is_err(), "no such annotation");
     let n = links::remove_all(&mut doc, None).unwrap();
     assert!(n >= 1 && links::list(&doc).is_empty());
-    assert!(links::add(&mut doc, 0, [0.0, 0.0, 1.0, 1.0], &LinkAction::Page(0), &LinkStyle::default()).is_err(), "too small");
+    assert!(
+        links::add(&mut doc, 0, [0.0, 0.0, 1.0, 1.0], &LinkAction::Page { page: 0, zoom: LinkZoom::FitPage }, &LinkStyle::default()).is_err(),
+        "too small"
+    );
+}
+
+#[test]
+fn page_links_keep_their_zoom() {
+    use crate::links::{self, LinkAction, LinkStyle, LinkZoom};
+    let page1 = page_refs(&fixture()).unwrap()[1];
+    let dest_of = |doc: &Document, obj: ObjRef| doc.get(obj).as_dict().and_then(|d| d.get(b"Dest").cloned());
+    // Each zoom is written as its destination type (Table 149) and reads back after a save.
+    let null = Object::Null;
+    for (zoom, written) in [
+        (LinkZoom::FitPage, vec![Object::name("Fit")]),
+        (LinkZoom::FitWidth, vec![Object::name("FitH"), null.clone()]),
+        (LinkZoom::FitHeight, vec![Object::name("FitV"), null.clone()]),
+        (LinkZoom::FitVisible, vec![Object::name("FitB")]),
+        (LinkZoom::Inherit, vec![Object::name("XYZ"), null.clone(), null.clone(), null.clone()]),
+        (LinkZoom::Percent(100.0), vec![Object::name("XYZ"), null.clone(), null.clone(), Object::Real(1.0)]),
+        (LinkZoom::Percent(250.0), vec![Object::name("XYZ"), null.clone(), null.clone(), Object::Real(2.5)]),
+    ] {
+        let mut doc = fixture();
+        let i = links::add(&mut doc, 0, [10.0, 10.0, 60.0, 30.0], &LinkAction::Page { page: 1, zoom }, &LinkStyle::default()).unwrap();
+        let link = links::list(&doc).into_iter().find(|l| l.page == 0 && l.index == i).unwrap();
+        let mut expected = vec![Object::Ref(page1)];
+        expected.extend(written);
+        assert_eq!(dest_of(&doc, link.obj.unwrap()), Some(Object::Array(expected)), "{zoom:?}");
+        let doc = reopen(&doc);
+        let link = links::list(&doc).into_iter().find(|l| l.page == 0 && l.index == i).unwrap();
+        assert_eq!(link.action, LinkAction::Page { page: 1, zoom }, "{zoom:?} after a save");
+    }
+    // What other writers use reads as the nearest zoom: a zero zoom keeps the reader's, the boxed
+    // fits as the plain ones, a rectangle as Fit Page, and a GoTo action like a /Dest.
+    let mut doc = fixture();
+    let i = links::add(&mut doc, 0, [10.0, 10.0, 60.0, 30.0], &LinkAction::Page { page: 1, zoom: LinkZoom::FitPage }, &LinkStyle::default()).unwrap();
+    let obj = links::list(&doc).into_iter().find(|l| l.page == 0 && l.index == i).unwrap().obj.unwrap();
+    let dest = |kind: &str, operands: Vec<Object>| {
+        let mut d = vec![Object::Ref(page1), Object::name(kind)];
+        d.extend(operands);
+        Object::Array(d)
+    };
+    for (key, value, zoom) in [
+        ("Dest", dest("XYZ", vec![Object::Int(100), Object::Int(700), Object::Int(0)]), LinkZoom::Inherit),
+        ("Dest", dest("FitBH", vec![Object::Int(500)]), LinkZoom::FitWidth),
+        ("Dest", dest("FitBV", vec![Object::Int(20)]), LinkZoom::FitHeight),
+        ("Dest", dest("FitR", vec![Object::Int(0), Object::Int(0), Object::Int(10), Object::Int(10)]), LinkZoom::FitPage),
+        ("A", dest("XYZ", vec![null.clone(), null.clone(), Object::Real(1.5)]), LinkZoom::Percent(150.0)),
+        // A factor whose percentage overflows still reads as a finite zoom.
+        ("Dest", dest("XYZ", vec![null.clone(), null.clone(), Object::Real(1e307)]), LinkZoom::Percent(f64::MAX)),
+    ] {
+        let mut d = doc.get(obj).as_dict().cloned().unwrap();
+        d.remove(b"Dest");
+        d.remove(b"A");
+        if key == "A" {
+            let mut go_to = pdfcraft_cos::Dict::new();
+            go_to.set(b"S".to_vec(), Object::name("GoTo"));
+            go_to.set(b"D".to_vec(), value);
+            d.set(b"A".to_vec(), Object::Dict(go_to));
+        } else {
+            d.set(b"Dest".to_vec(), value);
+        }
+        doc.set(obj, Object::Dict(d));
+        let link = links::list(&doc).into_iter().find(|l| l.page == 0 && l.index == i).unwrap();
+        assert_eq!(link.action, LinkAction::Page { page: 1, zoom }, "{key}");
+    }
+    // A zoom that isn't a positive percentage is refused before anything is written.
+    for p in [0.0, -50.0, f64::NAN, f64::INFINITY] {
+        let before = links::list(&doc).len();
+        let refused =
+            links::add(&mut doc, 0, [10.0, 10.0, 60.0, 30.0], &LinkAction::Page { page: 1, zoom: LinkZoom::Percent(p) }, &LinkStyle::default());
+        assert!(refused.is_err(), "{p}");
+        assert_eq!(links::list(&doc).len(), before, "{p}: no link added");
+    }
 }
 
 #[test]

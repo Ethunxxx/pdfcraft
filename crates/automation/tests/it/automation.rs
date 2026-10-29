@@ -5364,6 +5364,43 @@ fn links_through_tools() {
     assert!(matches!(a.call("link_add", &json!({ "doc": doc, "page": 1, "rect": [0, 0, 50, 20] })), Err(ToolError::InvalidArgs(_))));
 }
 
+#[test]
+fn link_zoom_through_tools() {
+    let dir = workdir("link-zoom");
+    std::fs::write(dir.join("notes.txt"), "Contents").unwrap();
+    let mut a = auto(&dir);
+    let doc = ok(&mut a, "doc_create", json!({ "from": "text", "path": "notes.txt" }))["doc"].as_u64().unwrap();
+    let link = |a: &mut Automation| ok(a, "link_list", json!({ "doc": doc }))["links"][0].clone();
+    // A page link opens at Fit Page unless told otherwise.
+    ok(&mut a, "link_add", json!({ "doc": doc, "page": 1, "rect": [72, 300, 200, 320], "to_page": 1 }));
+    assert_eq!((link(&mut a)["to_page"].clone(), link(&mut a)["zoom"].clone()), (json!(1), json!("fit_page")));
+    let index = link(&mut a)["index"].clone();
+    // A zoom alone keeps the page; a page alone keeps the zoom.
+    ok(&mut a, "link_edit", json!({ "doc": doc, "page": 1, "index": index, "zoom": 200 }));
+    let l = link(&mut a);
+    assert_eq!((l["to_page"].clone(), l["zoom"].clone()), (json!(1), json!(200.0)));
+    assert_eq!(l["destination"]["zoom"], 2.0, "the viewer reads the zoom the link writes: {l}");
+    ok(&mut a, "link_edit", json!({ "doc": doc, "page": 1, "index": index, "zoom": "fit_width" }));
+    ok(&mut a, "link_edit", json!({ "doc": doc, "page": 1, "index": index, "to_page": 1 }));
+    assert_eq!(link(&mut a)["zoom"], "fit_width");
+    for (name, zoom) in [("actual", json!(100.0)), ("inherit", json!("inherit")), ("fit_visible", json!("fit_visible"))] {
+        ok(&mut a, "link_edit", json!({ "doc": doc, "page": 1, "index": index, "zoom": name }));
+        assert_eq!(link(&mut a)["zoom"], zoom, "{name}");
+    }
+    // A zoom needs a page to show: refused with a web address, unknown, or not positive.
+    for args in [
+        json!({ "doc": doc, "page": 1, "rect": [72, 400, 200, 420], "url": "https://example.org", "zoom": "fit_page" }),
+        json!({ "doc": doc, "page": 1, "rect": [72, 400, 200, 420], "zoom": "fit_page" }),
+        json!({ "doc": doc, "page": 1, "rect": [72, 400, 200, 420], "to_page": 1, "zoom": "sideways" }),
+        json!({ "doc": doc, "page": 1, "rect": [72, 400, 200, 420], "to_page": 1, "zoom": 0 }),
+        json!({ "doc": doc, "page": 1, "rect": [72, 400, 200, 420], "to_page": 1, "zoom": [2] }),
+    ] {
+        assert!(matches!(a.call("link_add", &args), Err(ToolError::InvalidArgs(_))), "{args}");
+    }
+    ok(&mut a, "link_edit", json!({ "doc": doc, "page": 1, "index": index, "url": "https://example.org" }));
+    assert!(matches!(a.call("link_edit", &json!({ "doc": doc, "page": 1, "index": index, "zoom": 150 })), Err(ToolError::InvalidArgs(_))));
+}
+
 /// #4168: a Launch action whose file is a PDF (here with Windows `\` separators, relative to the
 /// source as a remote link is) opens that PDF in PdfCraft through link_open, within the root; one
 /// naming a program is listed but never followed.
