@@ -76,8 +76,15 @@ fn zoom_label(zoom: LinkZoom) -> String {
         LinkZoom::FitVisible => tl!("Fit Visible").to_string(),
         LinkZoom::Inherit => tl!("Inherit Zoom").to_string(),
         LinkZoom::Percent(p) if (p - 100.0).abs() < 1e-9 => tl!("Actual Size").to_string(),
-        // Another writer's factor can be anything up to f64::MAX: exponent form keeps it short.
-        LinkZoom::Percent(p) if p >= 1e6 => format!("{p:.1e}%"),
+        // Another writer's factor can be anything up to f64::MAX, or a tiny fraction: exponent
+        // form keeps it short.
+        LinkZoom::Percent(p) if !(0.01..1e6).contains(&p) => format!("{p:.1e}%"),
+        // A fractional one (another writer's 0.5% or 62.5%) shows up to two places, so it agrees
+        // with what link_list reports instead of rounding to 0%.
+        LinkZoom::Percent(p) if p.fract() != 0.0 => {
+            let places = format!("{p:.2}");
+            format!("{}%", places.trim_end_matches('0').trim_end_matches('.'))
+        }
         LinkZoom::Percent(p) => format!("{p:.0}%"),
     }
 }
@@ -436,5 +443,10 @@ mod tests {
         // The destination's own zoom, past what PdfCraft writes, is shown as it is.
         assert_eq!(zoom_label(LinkZoom::Percent(10000.0)), "10000%");
         assert_eq!(zoom_label(LinkZoom::Percent(f64::MAX)), "1.8e308%");
+        // A fractional zoom keeps its places instead of rounding to 0%.
+        assert_eq!(zoom_label(LinkZoom::Percent(0.5)), "0.5%");
+        assert_eq!(zoom_label(LinkZoom::Percent(62.5)), "62.5%");
+        assert_eq!(zoom_label(LinkZoom::Percent(33.333)), "33.33%");
+        assert_eq!(zoom_label(LinkZoom::Percent(0.001)), "1.0e-3%");
     }
 }

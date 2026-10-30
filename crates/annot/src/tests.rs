@@ -760,6 +760,72 @@ fn a_rewritten_link_keeps_its_own_zoom_factor() {
     assert_eq!(dest_of(&doc, obj), Some(xyz(pages[1], Object::Real(64.0))));
 }
 
+/// A go-to edited without a change (its own page and zoom, as `link_edit` naming its page does)
+/// is left as it is: the `/XYZ` position, a fit's position and the GoTo form stay. Given a new
+/// page with its zoom, a link keeps how that zoom is written, a boxed fit (`/FitBH`, `/FitBV`)
+/// included, but not its position, which belongs to the old page.
+#[test]
+fn an_unchanged_go_to_keeps_its_destination_and_a_new_page_keeps_its_fit() {
+    use crate::links::{self, LinkAction, LinkStyle, LinkZoom};
+    let pages = page_refs(&fixture()).unwrap();
+    let dest = |page: ObjRef, kind: &str, operands: Vec<Object>| {
+        let mut d = vec![Object::Ref(page), Object::name(kind)];
+        d.extend(operands);
+        Object::Array(d)
+    };
+    let link_with = |key: &str, value: Object| {
+        let mut doc = fixture();
+        let i =
+            links::add(&mut doc, 0, [10.0, 10.0, 60.0, 30.0], &LinkAction::Page { page: 1, zoom: LinkZoom::FitPage }, &LinkStyle::default()).unwrap();
+        let obj = links::list(&doc).into_iter().find(|l| l.page == 0 && l.index == i).unwrap().obj.unwrap();
+        let mut d = doc.get(obj).as_dict().cloned().unwrap();
+        d.remove(b"Dest");
+        if key == "A" {
+            let mut go_to = pdfcraft_cos::Dict::new();
+            go_to.set(b"S".to_vec(), Object::name("GoTo"));
+            go_to.set(b"D".to_vec(), value);
+            d.set(b"A".to_vec(), Object::Dict(go_to));
+        } else {
+            d.set(b"Dest".to_vec(), value);
+        }
+        doc.set(obj, Object::Dict(d));
+        (doc, i, obj)
+    };
+    let (num, null) = (|n: i64| Object::Int(n), Object::Null);
+    // The same page and zoom: nothing is rewritten.
+    for (key, value) in [
+        ("Dest", dest(pages[1], "XYZ", vec![num(72), num(500), Object::Real(2.0)])),
+        ("Dest", dest(pages[1], "FitBH", vec![num(250)])),
+        ("Dest", dest(pages[1], "FitV", vec![num(20)])),
+        ("A", dest(pages[1], "XYZ", vec![num(72), num(500), Object::Real(0.005)])),
+    ] {
+        let (mut doc, i, obj) = link_with(key, value);
+        let before = doc.get(obj).as_dict().cloned();
+        let LinkAction::Page { page, zoom } = links::list(&doc).into_iter().find(|l| l.page == 0 && l.index == i).unwrap().action else {
+            panic!("{key}")
+        };
+        links::set(&mut doc, 0, i, None, Some(&LinkAction::Page { page, zoom }), None).unwrap();
+        assert_eq!(doc.get(obj).as_dict().cloned(), before, "{key} {zoom:?}: left as it is");
+    }
+    // A new page: the fit's kind and the factor stay, positions go.
+    for (value, written) in [
+        (dest(pages[1], "FitBH", vec![num(250)]), dest(pages[0], "FitBH", vec![null.clone()])),
+        (dest(pages[1], "FitBV", vec![num(20)]), dest(pages[0], "FitBV", vec![null.clone()])),
+        (dest(pages[1], "FitH", vec![num(250)]), dest(pages[0], "FitH", vec![null.clone()])),
+        (
+            dest(pages[1], "XYZ", vec![num(72), num(500), Object::Real(2.0)]),
+            dest(pages[0], "XYZ", vec![null.clone(), null.clone(), Object::Real(2.0)]),
+        ),
+    ] {
+        let (mut doc, i, obj) = link_with("Dest", value.clone());
+        let LinkAction::Page { zoom, .. } = links::list(&doc).into_iter().find(|l| l.page == 0 && l.index == i).unwrap().action else {
+            panic!("{value:?}")
+        };
+        links::set(&mut doc, 0, i, None, Some(&LinkAction::Page { page: 0, zoom }), None).unwrap();
+        assert_eq!(doc.get(obj).as_dict().and_then(|d| d.get(b"Dest").cloned()), Some(written), "{value:?}");
+    }
+}
+
 #[test]
 fn link_uri_is_percent_encoded_to_7_bit_ascii() {
     use crate::links::{self, LinkAction, LinkStyle};

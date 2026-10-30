@@ -41,8 +41,9 @@ pub enum LinkZoom {
 impl LinkZoom {
     /// The zoom an explicit destination array (`[page /XYZ …]`, `[page /Fit]`, …) asks for. The
     /// boxed variants read as their unboxed ones, and a `/FitR` rectangle or a missing or unknown
-    /// type as Fit Page, the view links had before they carried a zoom. Positions are not kept:
-    /// a link is rewritten only when its destination is changed.
+    /// type as Fit Page, the view links had before they carried a zoom. A link whose page and zoom
+    /// are unchanged is not rewritten, so its position is kept; one given a new page keeps how its
+    /// zoom is written (`write_action`) but not its position.
     fn of_dest(doc: &Document, dest: &[Object]) -> Self {
         let kind = dest.get(1).map(|k| doc.resolve(k)).and_then(|k| k.as_name().map(<[u8]>::to_vec));
         match kind.as_deref() {
@@ -50,8 +51,8 @@ impl LinkZoom {
             Some(b"FitH" | b"FitBH") => LinkZoom::FitWidth,
             Some(b"FitV" | b"FitBV") => LinkZoom::FitHeight,
             Some(b"XYZ") => match dest.get(4).and_then(|z| doc.resolve(z).as_f64()) {
-                // Finite even for a factor near f64::MAX. A link rewritten with this zoom keeps
-                // the factor itself, however far outside 1–6400% (`write_action`).
+                // Finite even for a factor near f64::MAX. A link given a new page with this zoom
+                // keeps the factor itself, however far outside 1–6400% (`write_action`).
                 Some(z) if z.is_finite() && z > 0.0 => LinkZoom::Percent((z * 100.0).min(f64::MAX)),
                 // A zoom of 0 or null keeps the reader's (Table 149).
                 _ => LinkZoom::Inherit,
@@ -278,9 +279,8 @@ fn uri_bytes(u: &str) -> Vec<u8> {
     out
 }
 
-/// The zoom of the go-to-page destination link `d` has now (its `/Dest`, or a GoTo action's
-/// `/D`), as [`LinkZoom::of_dest`] reads it, with the destination's own zoom operand.
-fn current_zoom(doc: &Document, d: &Dict) -> Option<(LinkZoom, Object)> {
+/// The explicit destination array link `d` goes to now: its `/Dest`, or a GoTo action's `/D`.
+fn current_dest(doc: &Document, d: &Dict) -> Option<Vec<Object>> {
     let dest = match d.get(b"Dest") {
         Some(dest) => doc.resolve(dest),
         None => {
@@ -289,8 +289,7 @@ fn current_zoom(doc: &Document, d: &Dict) -> Option<(LinkZoom, Object)> {
             doc.resolve(go_to.get(b"D")?)
         }
     };
-    let dest = dest.as_array()?;
-    Some((LinkZoom::of_dest(doc, dest), doc.resolve(dest.get(4)?).as_ref().clone()))
+    dest.as_array().cloned()
 }
 
 fn write_action(doc: &Document, d: &mut Dict, a: &LinkAction) -> Result<(), AnnotError> {
@@ -298,15 +297,29 @@ fn write_action(doc: &Document, d: &mut Dict, a: &LinkAction) -> Result<(), Anno
         LinkAction::Page { page, zoom } => {
             let target = page_ref(doc, *page)?;
             let mut operands = zoom.operands()?;
-            // A link given the zoom it has (a new page, Link Properties' OK, `link_edit` without
-            // `zoom`) keeps its own factor, even one outside the 1–6400% a new zoom is written
-            // within, so rewriting it doesn't change the zoom.
-            if matches!(zoom, LinkZoom::Percent(_))
-                && let Some((now, factor)) = current_zoom(doc, d)
-                && now == *zoom
-                && let Some(slot) = operands.get_mut(3)
-            {
-                *slot = factor;
+            let current = current_dest(doc, d).filter(|c| LinkZoom::of_dest(doc, c) == *zoom);
+            if let Some(c) = current {
+                // The page and zoom the link has (`link_edit` naming its own page): the
+                // destination is left as it is, position on the page and GoTo form included.
+                let same_page = match c.first() {
+                    Some(Object::Ref(r)) => *r == target,
+                    Some(Object::Int(i)) => usize::try_from(*i).ok() == Some(*page),
+                    _ => false,
+                };
+                if same_page {
+                    return Ok(());
+                }
+                // A new page with the zoom the link has keeps how that zoom is written: a boxed
+                // fit (`/FitBH`, `/FitBV`) and its own `/XYZ` factor, even one outside the 1–6400%
+                // a new zoom is written within. Positions belong to the old page and are dropped.
+                let (slot, own) = match zoom {
+                    LinkZoom::Percent(_) => (operands.get_mut(3), c.get(4)),
+                    LinkZoom::FitWidth | LinkZoom::FitHeight => (operands.get_mut(0), c.get(1)),
+                    _ => (None, None),
+                };
+                if let (Some(slot), Some(own)) = (slot, own) {
+                    *slot = doc.resolve(own).as_ref().clone();
+                }
             }
             let mut dest = vec![Object::Ref(target)];
             dest.extend(operands);

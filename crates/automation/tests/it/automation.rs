@@ -5403,17 +5403,19 @@ fn link_zoom_through_tools() {
 
 /// `link_edit` with a page and no zoom keeps the link's zoom, and with it the link's own `/XYZ`
 /// factor, even outside the 1–6400% a chosen zoom is written within: 0.5% and 10000% stay so, in
-/// link_list and in the viewer's destination. A zoom chosen anew is still kept within 1–6400%.
+/// link_list and in the viewer's destination. Naming the link's own page changes nothing, so its
+/// position stays too. A zoom chosen anew is still kept within 1–6400%.
 #[test]
 fn link_edit_keeps_a_links_own_zoom_outside_the_range_it_writes() {
     let (_base, root) = sandbox("link-own-zoom");
     let pdf = pdf_of(&[
         "<< /Type /Catalog /Pages 2 0 R >>",
         "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 /MediaBox [0 0 300 400] >>",
-        "<< /Type /Page /Parent 2 0 R /Annots [5 0 R 6 0 R] >>",
+        "<< /Type /Page /Parent 2 0 R /Annots [5 0 R 6 0 R 7 0 R] >>",
         "<< /Type /Page /Parent 2 0 R >>",
         "<< /Type /Annot /Subtype /Link /Rect [10 10 100 30] /Border [0 0 0] /Dest [3 0 R /XYZ null null 0.005] >>",
         "<< /Type /Annot /Subtype /Link /Rect [10 50 100 70] /Border [0 0 0] /Dest [3 0 R /XYZ null null 100] >>",
+        "<< /Type /Annot /Subtype /Link /Rect [10 90 100 110] /Border [0 0 0] /Dest [3 0 R /XYZ 72 300 2] >>",
     ]);
     std::fs::write(root.join("zooms.pdf"), pdf).unwrap();
     let mut a = auto(&root);
@@ -5428,6 +5430,10 @@ fn link_edit_keeps_a_links_own_zoom_outside_the_range_it_writes() {
         let shown = l["destination"]["zoom"].as_f64().unwrap();
         assert!((shown - factor).abs() <= factor * 1e-6, "the viewer's zoom is the link's own: {l}");
     }
+    ok(&mut a, "link_edit", json!({ "doc": doc, "page": 1, "index": 3, "to_page": 1 }));
+    let l = link(&mut a, 3);
+    // `/XYZ 72 300` on a 400 pt page: 72 from the left and 100 from the top, as the tools measure.
+    assert_eq!((&l["zoom"], &l["destination"]["left"], &l["destination"]["top"]), (&json!(200.0), &json!(72.0), &json!(100.0)), "{l}");
     ok(&mut a, "link_edit", json!({ "doc": doc, "page": 1, "index": 1, "zoom": 10000 }));
     assert_eq!(link(&mut a, 1)["zoom"], json!(6400.0));
 }
