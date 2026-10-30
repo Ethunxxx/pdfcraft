@@ -180,6 +180,8 @@ fn bookmark_fixture() -> Vec<u8> {
     out
 }
 
+/// The app with [`bookmark_fixture`] open from `source_path` (in memory when `None`) and the
+/// Bookmarks panel showing.
 fn bookmark_harness(source_path: Option<String>) -> Harness<'static, PdfCraftApp> {
     let mut h = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).build_eframe(move |_cc| {
         let mut app = PdfCraftApp::new();
@@ -193,6 +195,7 @@ fn bookmark_harness(source_path: Option<String>) -> Harness<'static, PdfCraftApp
     h
 }
 
+/// Click the Bookmarks panel row titled `title`.
 fn click_bookmark(h: &mut Harness<'static, PdfCraftApp>, title: &str) {
     h.get_by_label(title).click();
     h.run_steps(4);

@@ -161,6 +161,9 @@ impl<'a> Inspector<'a> {
         me
     }
 
+    /// Reads what `info` holds beyond the page list: encryption, document information, tagging,
+    /// page labels, bookmarks, annotations, transitions, form fields, layers, fonts, attachments,
+    /// JavaScript and the opening destination.
     pub(super) fn fill(&self, info: &mut DocInfo) {
         // lopdf drops /Encrypt from the trailer once it has decrypted the file.
         info.encrypted = self.doc.encrypted();

@@ -279,6 +279,8 @@ pub(crate) fn summary(d: &Document) -> Value {
     })
 }
 
+/// What `doc_info` returns for an open document: its metadata, security, pages, bookmarks,
+/// comments, fields, links, layers, transitions, attachments, fonts, warnings and repairs.
 pub(crate) fn info(d: &Document) -> Value {
     let i = &d.info;
     let page1 = |p: usize| p + 1;

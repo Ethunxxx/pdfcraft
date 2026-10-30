@@ -192,6 +192,9 @@ impl<'a> Inspector<'a> {
         link_replies(&mut info.annotations);
     }
 
+    /// The link annotation `d`, at position `index` of page `page`'s `/Annots`: where its `/Dest`
+    /// goes, else what its action `/A` does ([`Self::action_target`]). `None` when it has no
+    /// rectangle, or a destination or action that leads nowhere.
     fn link(&self, page: usize, index: usize, d: &Dictionary, text_budget: &mut usize) -> Option<Link> {
         let rect = rect4(self.resolve(d.get(b"Rect").ok()?));
         let target = if let Ok(dest) = d.get(b"Dest") {
