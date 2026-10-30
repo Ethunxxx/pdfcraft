@@ -33,16 +33,11 @@ pub enum LinkZoom {
     FitVisible,
     /// `/XYZ null null null`: the reader's zoom is kept.
     Inherit,
-    /// `/XYZ null null z` with z = percent / 100; 100 is Actual Size. Written and read within
-    /// 1–6400%.
+    /// `/XYZ null null z` with z = percent / 100; 100 is Actual Size. Written within 1–6400%.
     Percent(f64),
 }
 
 impl LinkZoom {
-    // The percentages a link is written with and read as.
-    const MIN_PERCENT: f64 = 1.0;
-    const MAX_PERCENT: f64 = 6400.0;
-
     /// The zoom an explicit destination array (`[page /XYZ …]`, `[page /Fit]`, …) asks for. The
     /// boxed variants read as their unboxed ones, and a `/FitR` rectangle or a missing or unknown
     /// type as Fit Page, the view links had before they carried a zoom. Positions are not kept:
@@ -54,9 +49,8 @@ impl LinkZoom {
             Some(b"FitH" | b"FitBH") => LinkZoom::FitWidth,
             Some(b"FitV" | b"FitBV") => LinkZoom::FitHeight,
             Some(b"XYZ") => match dest.get(4).and_then(|z| doc.resolve(z).as_f64()) {
-                // Capped as it is written, so a factor near f64::MAX (or one whose percentage
-                // overflows) doesn't read as a 309-digit percentage.
-                Some(z) if z.is_finite() && z > 0.0 => LinkZoom::Percent((z * 100.0).clamp(Self::MIN_PERCENT, Self::MAX_PERCENT)),
+                // Finite even for a factor near f64::MAX; writing it back keeps it within 6400%.
+                Some(z) if z.is_finite() && z > 0.0 => LinkZoom::Percent((z * 100.0).min(f64::MAX)),
                 // A zoom of 0 or null keeps the reader's (Table 149).
                 _ => LinkZoom::Inherit,
             },
@@ -76,8 +70,7 @@ impl LinkZoom {
                 if !(p.is_finite() && p > 0.0) {
                     return Err(AnnotError::Invalid("the link's zoom must be a positive percentage".into()));
                 }
-                let factor = p.clamp(Self::MIN_PERCENT, Self::MAX_PERCENT) / 100.0;
-                vec![Object::name("XYZ"), Object::Null, Object::Null, Object::Real(factor)]
+                vec![Object::name("XYZ"), Object::Null, Object::Null, Object::Real((p / 100.0).clamp(0.01, 64.0))]
             }
         })
     }

@@ -677,11 +677,11 @@ fn page_links_keep_their_zoom() {
         ("Dest", dest("FitBV", vec![Object::Int(20)]), LinkZoom::FitHeight),
         ("Dest", dest("FitR", vec![Object::Int(0), Object::Int(0), Object::Int(10), Object::Int(10)]), LinkZoom::FitPage),
         ("A", dest("XYZ", vec![null.clone(), null.clone(), Object::Real(1.5)]), LinkZoom::Percent(150.0)),
-        // A factor outside what PdfCraft writes reads as the nearest end of 1–6400%, even one
-        // whose percentage overflows.
-        ("Dest", dest("XYZ", vec![null.clone(), null.clone(), Object::Real(1e307)]), LinkZoom::Percent(6400.0)),
-        ("Dest", dest("XYZ", vec![null.clone(), null.clone(), Object::Real(100.0)]), LinkZoom::Percent(6400.0)),
-        ("Dest", dest("XYZ", vec![null.clone(), null.clone(), Object::Real(0.001)]), LinkZoom::Percent(1.0)),
+        // A factor outside what PdfCraft writes reads as the destination has it, not capped, so
+        // it agrees with the viewer's `destination`; one whose percentage overflows stays finite.
+        ("Dest", dest("XYZ", vec![null.clone(), null.clone(), Object::Real(100.0)]), LinkZoom::Percent(10000.0)),
+        ("Dest", dest("XYZ", vec![null.clone(), null.clone(), Object::Real(0.005)]), LinkZoom::Percent(0.5)),
+        ("Dest", dest("XYZ", vec![null.clone(), null.clone(), Object::Real(1e307)]), LinkZoom::Percent(f64::MAX)),
     ] {
         let mut d = doc.get(obj).as_dict().cloned().unwrap();
         d.remove(b"Dest");

@@ -76,6 +76,8 @@ fn zoom_label(zoom: LinkZoom) -> String {
         LinkZoom::FitVisible => tl!("Fit Visible").to_string(),
         LinkZoom::Inherit => tl!("Inherit Zoom").to_string(),
         LinkZoom::Percent(p) if (p - 100.0).abs() < 1e-9 => tl!("Actual Size").to_string(),
+        // Another writer's factor can be anything up to f64::MAX: exponent form keeps it short.
+        LinkZoom::Percent(p) if p >= 1e6 => format!("{p:.1e}%"),
         LinkZoom::Percent(p) => format!("{p:.0}%"),
     }
 }
@@ -390,7 +392,7 @@ pub(crate) fn edit_for(d: &LinkDraft) -> Edit {
 
 #[cfg(test)]
 mod tests {
-    use super::{LinkDraft, edit_for};
+    use super::{LinkDraft, edit_for, zoom_label};
     use pdfcraft_engine::{Edit, LinkAction, LinkStyle, LinkZoom};
 
     fn draft(current: LinkAction) -> LinkDraft {
@@ -426,5 +428,13 @@ mod tests {
         d.zoom = LinkZoom::Percent(200.0);
         d.target = 2;
         assert!(matches!(edit_for(&d), Edit::SetLink { action: Some(LinkAction::Page { page: 1, .. }), .. }));
+    }
+
+    #[test]
+    fn a_zoom_label_stays_short_for_any_factor() {
+        assert_eq!(zoom_label(LinkZoom::Percent(200.0)), "200%");
+        // The destination's own zoom, past what PdfCraft writes, is shown as it is.
+        assert_eq!(zoom_label(LinkZoom::Percent(10000.0)), "10000%");
+        assert_eq!(zoom_label(LinkZoom::Percent(f64::MAX)), "1.8e308%");
     }
 }
