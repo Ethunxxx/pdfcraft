@@ -708,6 +708,58 @@ fn page_links_keep_their_zoom() {
     }
 }
 
+/// A link rewritten with the zoom it has keeps its own `/XYZ` factor, however far outside the
+/// 1–6400% a new zoom is written within: giving it a new page (Link Properties' OK, `link_edit`
+/// without `zoom`) must not change its zoom. A zoom chosen anew is still written within 1–6400%.
+#[test]
+fn a_rewritten_link_keeps_its_own_zoom_factor() {
+    use crate::links::{self, LinkAction, LinkStyle, LinkZoom};
+    let pages = page_refs(&fixture()).unwrap();
+    let dest_of = |doc: &Document, obj: ObjRef| doc.get(obj).as_dict().and_then(|d| d.get(b"Dest").cloned());
+    let xyz = |page: ObjRef, factor: Object| Object::Array(vec![Object::Ref(page), Object::name("XYZ"), Object::Null, Object::Null, factor]);
+    for (key, factor) in [
+        ("Dest", Object::Real(0.005)),
+        ("Dest", Object::Real(100.0)),
+        ("Dest", Object::Int(100)),
+        ("Dest", Object::Real(1e307)),
+        ("A", Object::Real(0.005)),
+    ] {
+        let mut doc = fixture();
+        let i =
+            links::add(&mut doc, 0, [10.0, 10.0, 60.0, 30.0], &LinkAction::Page { page: 1, zoom: LinkZoom::FitPage }, &LinkStyle::default()).unwrap();
+        let obj = links::list(&doc).into_iter().find(|l| l.page == 0 && l.index == i).unwrap().obj.unwrap();
+        let mut d = doc.get(obj).as_dict().cloned().unwrap();
+        d.remove(b"Dest");
+        if key == "A" {
+            let mut go_to = pdfcraft_cos::Dict::new();
+            go_to.set(b"S".to_vec(), Object::name("GoTo"));
+            go_to.set(b"D".to_vec(), xyz(pages[1], factor.clone()));
+            d.set(b"A".to_vec(), Object::Dict(go_to));
+        } else {
+            d.set(b"Dest".to_vec(), xyz(pages[1], factor.clone()));
+        }
+        doc.set(obj, Object::Dict(d));
+        let LinkAction::Page { zoom, .. } = links::list(&doc).into_iter().find(|l| l.page == 0 && l.index == i).unwrap().action else {
+            panic!("{key} {factor:?}")
+        };
+        links::set(&mut doc, 0, i, None, Some(&LinkAction::Page { page: 0, zoom }), None).unwrap();
+        assert_eq!(dest_of(&doc, obj), Some(xyz(pages[0], factor.clone())), "{key} {factor:?}: the factor is the link's own");
+        let doc = reopen(&doc);
+        assert_eq!(
+            links::list(&doc).into_iter().find(|l| l.page == 0 && l.index == i).unwrap().action,
+            LinkAction::Page { page: 0, zoom },
+            "{key} {factor:?}"
+        );
+    }
+    // A zoom other than the link's is written within 1–6400%.
+    let mut doc = fixture();
+    let i = links::add(&mut doc, 0, [10.0, 10.0, 60.0, 30.0], &LinkAction::Page { page: 1, zoom: LinkZoom::Percent(50.0) }, &LinkStyle::default())
+        .unwrap();
+    let obj = links::list(&doc).into_iter().find(|l| l.page == 0 && l.index == i).unwrap().obj.unwrap();
+    links::set(&mut doc, 0, i, None, Some(&LinkAction::Page { page: 1, zoom: LinkZoom::Percent(10000.0) }), None).unwrap();
+    assert_eq!(dest_of(&doc, obj), Some(xyz(pages[1], Object::Real(64.0))));
+}
+
 #[test]
 fn link_uri_is_percent_encoded_to_7_bit_ascii() {
     use crate::links::{self, LinkAction, LinkStyle};

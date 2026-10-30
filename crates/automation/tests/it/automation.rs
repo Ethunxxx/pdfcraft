@@ -5401,6 +5401,37 @@ fn link_zoom_through_tools() {
     assert!(matches!(a.call("link_edit", &json!({ "doc": doc, "page": 1, "index": index, "zoom": 150 })), Err(ToolError::InvalidArgs(_))));
 }
 
+/// `link_edit` with a page and no zoom keeps the link's zoom, and with it the link's own `/XYZ`
+/// factor, even outside the 1–6400% a chosen zoom is written within: 0.5% and 10000% stay so, in
+/// link_list and in the viewer's destination. A zoom chosen anew is still kept within 1–6400%.
+#[test]
+fn link_edit_keeps_a_links_own_zoom_outside_the_range_it_writes() {
+    let (_base, root) = sandbox("link-own-zoom");
+    let pdf = pdf_of(&[
+        "<< /Type /Catalog /Pages 2 0 R >>",
+        "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 /MediaBox [0 0 300 400] >>",
+        "<< /Type /Page /Parent 2 0 R /Annots [5 0 R 6 0 R] >>",
+        "<< /Type /Page /Parent 2 0 R >>",
+        "<< /Type /Annot /Subtype /Link /Rect [10 10 100 30] /Border [0 0 0] /Dest [3 0 R /XYZ null null 0.005] >>",
+        "<< /Type /Annot /Subtype /Link /Rect [10 50 100 70] /Border [0 0 0] /Dest [3 0 R /XYZ null null 100] >>",
+    ]);
+    std::fs::write(root.join("zooms.pdf"), pdf).unwrap();
+    let mut a = auto(&root);
+    let doc = ok(&mut a, "doc_open", json!({ "path": "zooms.pdf" }))["doc"].as_u64().unwrap();
+    let link = |a: &mut Automation, index: u64| {
+        ok(a, "link_list", json!({ "doc": doc }))["links"].as_array().unwrap().iter().find(|l| l["index"] == index).unwrap().clone()
+    };
+    for (index, percent, factor) in [(1, 0.5, 0.005), (2, 10000.0, 100.0)] {
+        ok(&mut a, "link_edit", json!({ "doc": doc, "page": 1, "index": index, "to_page": 2 }));
+        let l = link(&mut a, index);
+        assert_eq!((l["to_page"].clone(), l["zoom"].clone()), (json!(2), json!(percent)), "{l}");
+        let shown = l["destination"]["zoom"].as_f64().unwrap();
+        assert!((shown - factor).abs() <= factor * 1e-6, "the viewer's zoom is the link's own: {l}");
+    }
+    ok(&mut a, "link_edit", json!({ "doc": doc, "page": 1, "index": 1, "zoom": 10000 }));
+    assert_eq!(link(&mut a, 1)["zoom"], json!(6400.0));
+}
+
 /// #4168: a Launch action whose file is a PDF (here with Windows `\` separators, relative to the
 /// source as a remote link is) opens that PDF in PdfCraft through link_open, within the root; one
 /// naming a program is listed but never followed.

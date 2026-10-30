@@ -33,7 +33,8 @@ pub enum LinkZoom {
     FitVisible,
     /// `/XYZ null null null`: the reader's zoom is kept.
     Inherit,
-    /// `/XYZ null null z` with z = percent / 100; 100 is Actual Size. Written within 1–6400%.
+    /// `/XYZ null null z` with z = percent / 100; 100 is Actual Size. A new zoom is written
+    /// within 1–6400%; a link rewritten with the zoom it has keeps its own factor.
     Percent(f64),
 }
 
@@ -49,7 +50,8 @@ impl LinkZoom {
             Some(b"FitH" | b"FitBH") => LinkZoom::FitWidth,
             Some(b"FitV" | b"FitBV") => LinkZoom::FitHeight,
             Some(b"XYZ") => match dest.get(4).and_then(|z| doc.resolve(z).as_f64()) {
-                // Finite even for a factor near f64::MAX; writing it back keeps it within 6400%.
+                // Finite even for a factor near f64::MAX. A link rewritten with this zoom keeps
+                // the factor itself, however far outside 1–6400% (`write_action`).
                 Some(z) if z.is_finite() && z > 0.0 => LinkZoom::Percent((z * 100.0).min(f64::MAX)),
                 // A zoom of 0 or null keeps the reader's (Table 149).
                 _ => LinkZoom::Inherit,
@@ -276,12 +278,38 @@ fn uri_bytes(u: &str) -> Vec<u8> {
     out
 }
 
+/// The zoom of the go-to-page destination link `d` has now (its `/Dest`, or a GoTo action's
+/// `/D`), as [`LinkZoom::of_dest`] reads it, with the destination's own zoom operand.
+fn current_zoom(doc: &Document, d: &Dict) -> Option<(LinkZoom, Object)> {
+    let dest = match d.get(b"Dest") {
+        Some(dest) => doc.resolve(dest),
+        None => {
+            let action = doc.resolve(d.get(b"A")?);
+            let go_to = action.as_dict().filter(|a| a.name(b"S") == Some(b"GoTo"))?;
+            doc.resolve(go_to.get(b"D")?)
+        }
+    };
+    let dest = dest.as_array()?;
+    Some((LinkZoom::of_dest(doc, dest), doc.resolve(dest.get(4)?).as_ref().clone()))
+}
+
 fn write_action(doc: &Document, d: &mut Dict, a: &LinkAction) -> Result<(), AnnotError> {
     match a {
         LinkAction::Page { page, zoom } => {
             let target = page_ref(doc, *page)?;
+            let mut operands = zoom.operands()?;
+            // A link given the zoom it has (a new page, Link Properties' OK, `link_edit` without
+            // `zoom`) keeps its own factor, even one outside the 1–6400% a new zoom is written
+            // within, so rewriting it doesn't change the zoom.
+            if matches!(zoom, LinkZoom::Percent(_))
+                && let Some((now, factor)) = current_zoom(doc, d)
+                && now == *zoom
+                && let Some(slot) = operands.get_mut(3)
+            {
+                *slot = factor;
+            }
             let mut dest = vec![Object::Ref(target)];
-            dest.extend(zoom.operands()?);
+            dest.extend(operands);
             d.remove(b"A");
             d.set(b"Dest".to_vec(), Object::Array(dest));
         }
